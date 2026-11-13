@@ -1,0 +1,174 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.role is string && (data.role == 'Manager' || data.role == 'Kasir') &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidStoreProfile(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+             data.storeName is string && data.storeName.size() > 0 && data.storeName.size() <= 100 &&
+             data.managerName is string && data.managerName.size() > 0 && data.managerName.size() <= 100 &&
+             data.isOpen is bool &&
+             data.managerPin is string && data.managerPin.size() >= 4 && data.managerPin.size() <= 8 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidInventory(data) {
+      return data.userId is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.unit is string && data.unit.size() > 0 && data.unit.size() <= 20 &&
+             data.stock is number &&
+             data.costPerUnit is number &&
+             (!('minStock' in data) || data.minStock is number);
+    }
+
+    function isValidMenuItem(data) {
+      return data.userId is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.price is number && data.price >= 0 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.recipe is list && data.recipe.size() <= 50;
+    }
+
+    function isValidTransaction(data) {
+      return data.userId is string &&
+             data.timestamp is number &&
+             data.items is list && data.items.size() > 0 && data.items.size() <= 100 &&
+             data.subtotal is number && data.total is number &&
+             data.paymentMethod is string && data.paymentMethod.size() <= 50 &&
+             data.status is string && data.status.size() <= 50 &&
+             (!('cashierShift' in data) || (data.cashierShift is string && data.cashierShift.size() <= 60));
+    }
+
+    function isValidDebt(data) {
+      return data.userId is string &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.totalDebt is number && data.remainingDebt is number &&
+             data.status is string && data.status.size() <= 50 &&
+             (!('entries' in data) || (data.entries is list && data.entries.size() <= 200)) &&
+             (!('payments' in data) || (data.payments is list && data.payments.size() <= 200));
+    }
+
+    function isValidStockLog(data) {
+      return data.userId is string &&
+             data.timestamp is number &&
+             data.ingredientName is string && data.ingredientName.size() <= 100 &&
+             data.delta is number &&
+             data.authorizedBy is string && data.authorizedBy.size() <= 100;
+    }
+
+    function isValidCashier(data) {
+      return data.userId is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 8 &&
+             data.isActive is bool &&
+             (!('shift' in data) || (data.shift is string && data.shift.size() <= 60));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       incoming().userId == userId &&
+                       isValidUserProfile(incoming());
+      allow update: if isOwner(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserProfile(incoming());
+      allow delete: if isOwner(userId);
+
+      match /stores/{storeId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         incoming().userId == userId &&
+                         isValidStoreProfile(incoming());
+        allow update: if isOwner(userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidStoreProfile(incoming());
+        allow delete: if isOwner(userId);
+
+        match /inventory/{ingredientId} {
+          allow get, list: if isOwner(userId);
+          allow create, update: if isOwner(userId) &&
+                                   incoming().userId == userId &&
+                                   isValidInventory(incoming());
+          allow delete: if isOwner(userId);
+        }
+
+        match /menu/{menuId} {
+          allow get, list: if isOwner(userId);
+          allow create, update: if isOwner(userId) &&
+                                   incoming().userId == userId &&
+                                   isValidMenuItem(incoming());
+          allow delete: if isOwner(userId);
+        }
+
+        match /transactions/{transactionId} {
+          allow get, list: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                           incoming().userId == userId &&
+                           isValidTransaction(incoming());
+          allow update: if isOwner(userId) &&
+                           incoming().userId == existing().userId &&
+                           isValidTransaction(incoming());
+          allow delete: if isOwner(userId);
+        }
+
+        match /debts/{debtId} {
+          allow get, list: if isOwner(userId);
+          allow create, update: if isOwner(userId) &&
+                                   incoming().userId == userId &&
+                                   isValidDebt(incoming());
+          allow delete: if isOwner(userId);
+        }
+
+        match /stock_logs/{logId} {
+          allow get, list: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                           incoming().userId == userId &&
+                           isValidStockLog(incoming());
+          allow delete: if isOwner(userId);
+        }
+
+        match /cashiers/{cashierId} {
+          allow get, list: if isOwner(userId);
+          allow create, update: if isOwner(userId) &&
+                                   incoming().userId == userId &&
+                                   isValidCashier(incoming());
+          allow delete: if isOwner(userId);
+        }
+      }
+    }
+  }
+}

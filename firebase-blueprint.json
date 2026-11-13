@@ -1,0 +1,166 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil pengguna kasir/pemilik warkop yang terdaftar",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID pengguna Firebase Auth" },
+        "displayName": { "type": "string", "description": "Nama tampilan pengguna" },
+        "email": { "type": "string", "description": "Alamat email pengguna" },
+        "role": { "type": "string", "description": "Peran pengguna (Manager atau Kasir)" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Waktu pembuatan profil" }
+      },
+      "required": ["userId", "displayName", "email", "role", "createdAt"]
+    },
+    "StoreProfile": {
+      "title": "StoreProfile",
+      "description": "Profil dan konfigurasi unit warkop",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID pemilik/manager" },
+        "storeName": { "type": "string", "description": "Nama toko / warkop" },
+        "managerName": { "type": "string", "description": "Nama manager toko" },
+        "isOpen": { "type": "boolean", "description": "Status buka toko untuk perhitungan biaya ops" },
+        "managerPin": { "type": "string", "description": "PIN otorisasi manajer untuk perubahan stok" },
+        "operatingCost": {
+          "type": "object",
+          "description": "Rincian biaya operasional harian warkop"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "storeName", "managerName", "isOpen", "managerPin", "createdAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Bahan baku inventaris warkop",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string" },
+        "stock": { "type": "number" },
+        "costPerUnit": { "type": "number" },
+        "minStock": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "unit", "stock", "costPerUnit"]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "Menu makanan dan minuman warkop beserta Bill of Materials resep",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "recipe": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "price", "category", "recipe"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Catatan transaksi penjualan kasir",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "cashierShift": { "type": "string" },
+        "customerName": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "timestamp", "items", "subtotal", "total", "paymentMethod", "status"]
+    },
+    "DebtAccount": {
+      "title": "DebtAccount",
+      "description": "Buku kasbon / piutang terakumulasi per pelanggan",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "totalDebt": { "type": "number" },
+        "remainingDebt": { "type": "number" },
+        "status": { "type": "string" },
+        "entries": { "type": "array" },
+        "payments": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "customerName", "totalDebt", "remainingDebt", "status"]
+    },
+    "StockLog": {
+      "title": "StockLog",
+      "description": "Riwayat penyesuaian stok bahan dengan otorisasi manager",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "ingredientName": { "type": "string" },
+        "delta": { "type": "number" },
+        "costImpact": { "type": "number" },
+        "authorizedBy": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "timestamp", "ingredientName", "delta", "authorizedBy", "createdAt"]
+    },
+    "CashierSubAccount": {
+      "title": "CashierSubAccount",
+      "description": "Sub-akun kasir di bawah manager toko",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "pin": { "type": "string" },
+        "shift": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "pin", "isActive", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "UserProfile" },
+      "description": "Profil pengguna terdaftar"
+    },
+    "/users/{userId}/stores/{storeId}": {
+      "schema": { "$ref": "StoreProfile" },
+      "description": "Profil dan konfigurasi unit warkop milik manager"
+    },
+    "/users/{userId}/stores/{storeId}/inventory/{ingredientId}": {
+      "schema": { "$ref": "InventoryItem" },
+      "description": "Daftar bahan baku dan persediaan stok fisik"
+    },
+    "/users/{userId}/stores/{storeId}/menu/{menuId}": {
+      "schema": { "$ref": "MenuItem" },
+      "description": "Katalog menu dan formula resep Bill of Materials"
+    },
+    "/users/{userId}/stores/{storeId}/transactions/{transactionId}": {
+      "schema": { "$ref": "Transaction" },
+      "description": "Catatan transaksi penjualan kasir"
+    },
+    "/users/{userId}/stores/{storeId}/debts/{debtId}": {
+      "schema": { "$ref": "DebtAccount" },
+      "description": "Buku kasbon dan saldo piutang akumulatif per pelanggan"
+    },
+    "/users/{userId}/stores/{storeId}/stock_logs/{logId}": {
+      "schema": { "$ref": "StockLog" },
+      "description": "Audit trail perubahan stok bahan"
+    },
+    "/users/{userId}/stores/{storeId}/cashiers/{cashierId}": {
+      "schema": { "$ref": "CashierSubAccount" },
+      "description": "Daftar sub-akun staf kasir toko"
+    }
+  }
+}

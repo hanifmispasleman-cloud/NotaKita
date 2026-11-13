@@ -1,0 +1,6 @@
+{
+  "name": "Kasir Warkop Emak",
+  "description": "Aplikasi Kasir Digital & Manajemen Stok Warkop Emak dengan pembukuan kasbon, otorisasi perubahan stok, dan real-time database.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
