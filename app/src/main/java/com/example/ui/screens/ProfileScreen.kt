@@ -220,13 +220,28 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                val displayedEmail = when {
+                    isSignedIn -> authUser?.email?.takeIf { it.isNotBlank() }
+                        ?: storeProfile.managerEmail.ifBlank { "Akun Google Terotentikasi" }
+                    storeProfile.managerEmail.isNotBlank() -> storeProfile.managerEmail
+                    else -> null
+                }
+
                 Text(
-                    text = if (isSignedIn) "Email: ${authUser?.email ?: "Akun Terotentikasi"}" else "Status: Mode Lokal (Tanpa Login)",
+                    text = if (displayedEmail != null) {
+                        "Email Manager: $displayedEmail"
+                    } else {
+                        "Status: Mode Lokal (Belum Terdaftar Email/Google)"
+                    },
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = if (isSignedIn) "Basis Data: Cloud Firestore Realtime" else "Basis Data: Penyimpanan Lokal (Siap Pratinjau)",
+                    text = if (isSignedIn) {
+                        "Basis Data: Cloud Firestore Realtime (Akun Google)"
+                    } else {
+                        "Basis Data: Penyimpanan Lokal (Hubungkan Google untuk Cloud Sync)"
+                    },
                     fontSize = 12.sp,
                     color = MutedGreyText
                 )

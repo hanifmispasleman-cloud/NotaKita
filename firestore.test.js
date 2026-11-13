@@ -67,6 +67,7 @@ test("Authenticated user: can create and read own store profile", async () => {
     userId: ALICE_UID,
     storeName: "Warkop Emak",
     managerName: "Emak",
+    managerEmail: "emak@warkop.id",
     isOpen: true,
     managerPin: "1234",
     createdAt: new Date(),

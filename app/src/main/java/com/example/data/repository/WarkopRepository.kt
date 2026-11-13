@@ -181,7 +181,8 @@ class WarkopRepository(private val context: Context) {
                         id = storeId,
                         userId = uid,
                         storeName = "Warkop Emak",
-                        managerName = auth.currentUser?.displayName ?: "Emak",
+                        managerName = auth.currentUser?.displayName?.ifBlank { "Emak" } ?: "Emak",
+                        managerEmail = auth.currentUser?.email ?: "",
                         isOpen = true,
                         managerPin = "1234",
                         operatingCost = OperatingCost()
@@ -191,6 +192,141 @@ class WarkopRepository(private val context: Context) {
                 }
             }
             awaitClose { registration.remove() }
+        }
+    }
+
+    suspend fun registerManagerProfile(
+        storeName: String,
+        managerName: String,
+        managerEmail: String,
+        managerPin: String,
+        storeId: String = "default_store"
+    ) {
+        val cleanStore = storeName.trim().ifBlank { "Warkop Emak" }
+        val cleanManager = managerName.trim().ifBlank { "Manager" }
+        val cleanEmail = managerEmail.trim()
+        val cleanPin = managerPin.trim().ifBlank { "1234" }
+
+        val uid = currentUserId
+        if (uid == null) {
+            localStoreProfile.value = localStoreProfile.value.copy(
+                storeName = cleanStore,
+                managerName = cleanManager,
+                managerEmail = cleanEmail,
+                managerPin = cleanPin
+            )
+            return
+        }
+
+        val userDoc = db.collection("users").document(uid)
+        val existingUser = userDoc.get().await()
+        val resolvedEmail = cleanEmail.ifBlank { auth.currentUser?.email ?: "" }
+        if (!existingUser.exists()) {
+            userDoc.set(
+                UserProfile(
+                    userId = uid,
+                    displayName = cleanManager,
+                    email = resolvedEmail,
+                    role = "Manager"
+                )
+            ).await()
+        } else {
+            userDoc.update(
+                mapOf(
+                    "displayName" to cleanManager,
+                    "email" to resolvedEmail,
+                    "role" to "Manager"
+                )
+            ).await()
+        }
+
+        val storeRef = storeDoc(uid, storeId)
+        val existingStore = storeRef.get().await()
+        if (!existingStore.exists()) {
+            storeRef.set(
+                StoreProfile(
+                    id = storeId,
+                    userId = uid,
+                    storeName = cleanStore,
+                    managerName = cleanManager,
+                    managerEmail = resolvedEmail,
+                    isOpen = true,
+                    managerPin = cleanPin,
+                    operatingCost = OperatingCost()
+                )
+            ).await()
+        } else {
+            storeRef.update(
+                mapOf(
+                    "storeName" to cleanStore,
+                    "managerName" to cleanManager,
+                    "managerEmail" to resolvedEmail,
+                    "managerPin" to cleanPin,
+                    "userId" to uid
+                )
+            ).await()
+        }
+    }
+
+    suspend fun ensureCloudUserAndStoreFromGoogle(
+        storeName: String? = null,
+        managerName: String? = null,
+        storeId: String = "default_store"
+    ) {
+        val user = auth.currentUser ?: return
+        val uid = user.uid
+        val resolvedName = managerName?.trim()?.takeIf { it.isNotBlank() }
+            ?: user.displayName?.trim()?.takeIf { it.isNotBlank() }
+            ?: "Manager"
+        val resolvedEmail = user.email?.trim() ?: ""
+        val resolvedStore = storeName?.trim()?.takeIf { it.isNotBlank() } ?: "Warkop Emak"
+
+        val userDoc = db.collection("users").document(uid)
+        val existingUser = userDoc.get().await()
+        if (!existingUser.exists()) {
+            userDoc.set(
+                UserProfile(
+                    userId = uid,
+                    displayName = resolvedName,
+                    email = resolvedEmail,
+                    role = "Manager"
+                )
+            ).await()
+        } else {
+            userDoc.update(
+                mapOf(
+                    "displayName" to resolvedName,
+                    "email" to resolvedEmail,
+                    "role" to "Manager"
+                )
+            ).await()
+        }
+
+        val storeRef = storeDoc(uid, storeId)
+        val existingStore = storeRef.get().await()
+        if (!existingStore.exists()) {
+            storeRef.set(
+                StoreProfile(
+                    id = storeId,
+                    userId = uid,
+                    storeName = resolvedStore,
+                    managerName = resolvedName,
+                    managerEmail = resolvedEmail,
+                    isOpen = true,
+                    managerPin = "1234",
+                    operatingCost = OperatingCost()
+                )
+            ).await()
+        } else if (resolvedEmail.isNotBlank()) {
+            val currentStore = existingStore.toObject(StoreProfile::class.java)
+            if (currentStore != null && currentStore.managerEmail.isBlank()) {
+                storeRef.update(
+                    mapOf(
+                        "managerEmail" to resolvedEmail,
+                        "userId" to uid
+                    )
+                ).await()
+            }
         }
     }
 

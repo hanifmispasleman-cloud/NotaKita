@@ -21,6 +21,7 @@
         "userId": { "type": "string", "description": "UID pemilik/manager" },
         "storeName": { "type": "string", "description": "Nama toko / warkop" },
         "managerName": { "type": "string", "description": "Nama manager toko" },
+        "managerEmail": { "type": "string", "description": "Alamat email manager toko" },
         "isOpen": { "type": "boolean", "description": "Status buka toko untuk perhitungan biaya ops" },
         "managerPin": { "type": "string", "description": "PIN otorisasi manajer untuk perubahan stok" },
         "operatingCost": {

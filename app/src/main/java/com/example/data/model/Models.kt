@@ -45,6 +45,7 @@ data class StoreProfile(
     val userId: String = "",
     val storeName: String = "Warkop Emak",
     val managerName: String = "Emak",
+    val managerEmail: String = "",
     val isOpen: Boolean = true,
     val managerPin: String = "1234",
     val operatingCost: OperatingCost = OperatingCost(),

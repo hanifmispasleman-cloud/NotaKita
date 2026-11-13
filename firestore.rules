@@ -39,6 +39,7 @@ service cloud.firestore {
       return data.userId is string && data.userId.size() <= 128 &&
              data.storeName is string && data.storeName.size() > 0 && data.storeName.size() <= 100 &&
              data.managerName is string && data.managerName.size() > 0 && data.managerName.size() <= 100 &&
+             (!('managerEmail' in data) || (data.managerEmail is string && data.managerEmail.size() <= 150)) &&
              data.isOpen is bool &&
              data.managerPin is string && data.managerPin.size() >= 4 && data.managerPin.size() <= 8 &&
              data.createdAt is timestamp && data.createdAt <= request.time;

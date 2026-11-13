@@ -128,6 +128,62 @@ class WarkopViewModel(application: Application) : AndroidViewModel(application) 
         showToast("Verifikasi Sidik Jari berhasil. Selamat datang, Manager $mgr")
     }
 
+    fun registerManagerAccount(
+        storeName: String,
+        managerName: String,
+        managerEmail: String,
+        managerPin: String
+    ): Boolean {
+        val cleanStore = storeName.trim()
+        val cleanManager = managerName.trim()
+        val cleanEmail = managerEmail.trim()
+        val cleanPin = managerPin.trim()
+
+        if (cleanStore.isBlank() || cleanManager.isBlank()) {
+            showToast("Nama Warkop dan Nama Manager wajib diisi")
+            return false
+        }
+        val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+        if (!emailRegex.matches(cleanEmail)) {
+            showToast("Format alamat email tidak valid")
+            return false
+        }
+        if (cleanPin.length !in 4..6 || !cleanPin.all { it.isDigit() }) {
+            showToast("PIN Manager harus 4 hingga 6 angka")
+            return false
+        }
+
+        viewModelScope.launch {
+            repository.registerManagerProfile(
+                storeName = cleanStore,
+                managerName = cleanManager,
+                managerEmail = cleanEmail,
+                managerPin = cleanPin
+            )
+        }
+
+        _sessionRole.value = SessionRole.Manager(cleanManager)
+        _activeOperator.value = cleanManager
+        _activeShift.value = "Manager (Full Shift)"
+        showToast("Akun Manager $cleanManager ($cleanEmail) berhasil dibuat")
+        return true
+    }
+
+    fun unlockManagerFromGoogleAuth(storeName: String? = null, managerName: String? = null) {
+        val resolvedName = managerName?.trim()?.takeIf { it.isNotBlank() }
+            ?: storeProfile.value.managerName.ifBlank { "Manager" }
+        viewModelScope.launch {
+            repository.ensureCloudUserAndStoreFromGoogle(
+                storeName = storeName,
+                managerName = resolvedName
+            )
+        }
+        _sessionRole.value = SessionRole.Manager(resolvedName)
+        _activeOperator.value = resolvedName
+        _activeShift.value = "Manager (Full Shift)"
+        showToast("Akun Google terhubung. Selamat datang, Manager $resolvedName")
+    }
+
     fun loginCashierWithPin(cashier: CashierSubAccount, pin: String): Boolean {
         if (!cashier.isActive) {
             showToast("Akun kasir ini sedang non-aktif")

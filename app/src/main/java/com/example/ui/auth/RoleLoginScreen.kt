@@ -1,5 +1,7 @@
 package com.example.ui.auth
 
+import android.app.Activity
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -23,30 +25,59 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.example.R
 import com.example.data.model.CashierSubAccount
 import com.example.ui.components.tactilePress
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.WarkopViewModel
 import com.example.util.BiometricHelper
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+import com.google.firebase.Firebase
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 @Composable
 fun RoleLoginScreen(
     viewModel: WarkopViewModel,
     isCloudSignedIn: Boolean,
     onRequestCloudAuth: () -> Unit,
+    onBeforeGoogleSignIn: () -> Unit,
+    onGoogleSignInCancelled: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
+
     val storeProfile by viewModel.storeProfile.collectAsState()
     val cashierList by viewModel.cashierList.collectAsState()
 
     // 0 = Manager (Akun Utama), 1 = Kasir Lapangan (Sub-Akun)
     var selectedRoleTab by remember { mutableStateOf(0) }
+    // Manager sub-mode: 0 = Masuk Manager, 1 = Daftar Akun Manager Baru (Email / Google)
+    var managerAuthMode by remember { mutableStateOf(0) }
+
     var managerPinInput by remember { mutableStateOf("") }
+    var regEmailInput by remember { mutableStateOf("") }
+    var regManagerNameInput by remember { mutableStateOf("") }
+    var regStoreNameInput by remember(storeProfile.storeName) {
+        mutableStateOf(storeProfile.storeName)
+    }
+    var regPinInput by remember { mutableStateOf("") }
+
     var cashierPinInput by remember { mutableStateOf("") }
     var selectedCashier by remember(cashierList) {
         mutableStateOf(cashierList.firstOrNull { it.isActive })
     }
+    var isGoogleLoading by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(cashierList) {
@@ -57,6 +88,52 @@ fun RoleLoginScreen(
 
     val biometricAvailability = remember(context) {
         BiometricHelper.checkAvailability(context)
+    }
+
+    fun launchDirectGoogleSignIn() {
+        isGoogleLoading = true
+        localError = null
+
+        val clientId = try {
+            context.getString(R.string.default_web_client_id)
+        } catch (e: Exception) {
+            localError = "Konfigurasi Google Sign-In tidak ditemukan."
+            isGoogleLoading = false
+            return
+        }
+
+        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+        val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+
+        onBeforeGoogleSignIn()
+        coroutineScope.launch {
+            try {
+                val result = credentialManager.getCredential(context as Activity, request)
+                val credential = result.credential
+                if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                    val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+                    val authResult = Firebase.auth.signInWithCredential(authCredential).await()
+                    val user = authResult.user
+                    viewModel.unlockManagerFromGoogleAuth(
+                        storeName = regStoreNameInput.takeIf { managerAuthMode == 1 && it.isNotBlank() },
+                        managerName = user?.displayName
+                    )
+                } else {
+                    onGoogleSignInCancelled()
+                    localError = "Tipe kredensial Google tidak dikenali"
+                }
+            } catch (e: GetCredentialCancellationException) {
+                Log.w("RoleLogin", "Google Sign-In dibatalkan: ${e.message}")
+                onGoogleSignInCancelled()
+            } catch (e: Exception) {
+                Log.e("RoleLogin", "Google Sign-In gagal", e)
+                onGoogleSignInCancelled()
+                localError = e.localizedMessage ?: "Gagal masuk dengan Akun Google"
+            } finally {
+                isGoogleLoading = false
+            }
+        }
     }
 
     Box(
@@ -156,123 +233,419 @@ fun RoleLoginScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 if (selectedRoleTab == 0) {
-                    // --- LOGIN MANAGER ---
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    // Sub-mode switcher: Masuk vs Daftar Akun Manager
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.AdminPanelSettings,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                        FilterChip(
+                            selected = managerAuthMode == 0,
+                            onClick = {
+                                managerAuthMode = 0
+                                localError = null
+                            },
+                            label = {
                                 Text(
-                                    text = "Akun Utama: ${storeProfile.managerName}",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    "Masuk Manager",
+                                    fontWeight = if (managerAuthMode == 0) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center
                                 )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Akses penuh Dashboard Finansial, Laporan PDF & Excel Akuntansi, Margin Harga, Biaya Operasional, dan pembuatan akun Kasir Lapangan.",
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
-                                lineHeight = 15.sp
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    OutlinedTextField(
-                        value = managerPinInput,
-                        onValueChange = {
-                            managerPinInput = it
-                            localError = null
-                        },
-                        label = { Text("PIN Keamanan Manager") },
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("input_login_manager_pin")
-                    )
-
-                    if (storeProfile.managerPin == "1234") {
-                        Text(
-                            text = "PIN default awal Manager: 1234 (dapat diubah di Profil & Keamanan)",
-                            fontSize = 11.sp,
-                            color = MutedGreyText,
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp)
+                                .weight(1f)
+                                .tactilePress()
+                                .testTag("chip_manager_login")
+                        )
+                        FilterChip(
+                            selected = managerAuthMode == 1,
+                            onClick = {
+                                managerAuthMode = 1
+                                localError = null
+                            },
+                            label = {
+                                Text(
+                                    "Daftar Akun",
+                                    fontWeight = if (managerAuthMode == 1) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .tactilePress()
+                                .testTag("chip_manager_register")
                         )
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    Button(
-                        onClick = {
-                            if (managerPinInput.isBlank()) {
-                                localError = "Masukkan PIN Manager atau gunakan sidik jari"
-                            } else if (!viewModel.loginManagerWithPin(managerPinInput)) {
-                                localError = "PIN Manager salah. Silakan coba lagi."
+                    if (managerAuthMode == 0) {
+                        // --- LOGIN MANAGER ---
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.AdminPanelSettings,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Akun Utama: ${storeProfile.managerName}",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                                if (storeProfile.managerEmail.isNotBlank()) {
+                                    Text(
+                                        text = "Email: ${storeProfile.managerEmail}",
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Akses penuh Dashboard Finansial, Laporan PDF & Excel Akuntansi, Margin Harga, Biaya Operasional, dan pembuatan akun Kasir Lapangan.",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                                    lineHeight = 15.sp
+                                )
                             }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .tactilePress()
-                            .testTag("btn_login_manager_pin")
-                    ) {
-                        Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Masuk Dashboard Manager", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
+                        }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                    OutlinedButton(
-                        onClick = {
-                            BiometricHelper.authenticate(
-                                context = context,
-                                title = "Login Manager - ${storeProfile.storeName}",
-                                subtitle = "Verifikasi sidik jari untuk membuka Dashboard Manager",
-                                onSuccess = { viewModel.loginManagerWithBiometric() },
-                                onError = { msg -> localError = msg }
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .tactilePress()
-                            .testTag("btn_login_manager_biometric")
-                    ) {
-                        Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (biometricAvailability.isAvailable) {
-                                "Masuk dengan Sidik Jari"
-                            } else {
-                                "Sidik Jari (Cek Perangkat)"
+                        OutlinedTextField(
+                            value = managerPinInput,
+                            onValueChange = {
+                                managerPinInput = it
+                                localError = null
                             },
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
+                            label = { Text("PIN Keamanan Manager") },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_login_manager_pin")
+                        )
+
+                        if (storeProfile.managerPin == "1234") {
+                            Text(
+                                text = "PIN default awal Manager: 1234 (dapat diubah di Profil & Keamanan)",
+                                fontSize = 11.sp,
+                                color = MutedGreyText,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Button(
+                            onClick = {
+                                if (managerPinInput.isBlank()) {
+                                    localError = "Masukkan PIN Manager atau gunakan sidik jari"
+                                } else if (!viewModel.loginManagerWithPin(managerPinInput)) {
+                                    localError = "PIN Manager salah. Silakan coba lagi."
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .tactilePress()
+                                .testTag("btn_login_manager_pin")
+                        ) {
+                            Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Masuk Dashboard Manager", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                BiometricHelper.authenticate(
+                                    context = context,
+                                    title = "Login Manager - ${storeProfile.storeName}",
+                                    subtitle = "Verifikasi sidik jari untuk membuka Dashboard Manager",
+                                    onSuccess = { viewModel.loginManagerWithBiometric() },
+                                    onError = { msg -> localError = msg }
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .tactilePress()
+                                .testTag("btn_login_manager_biometric")
+                        ) {
+                            Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (biometricAvailability.isAvailable) {
+                                    "Masuk dengan Sidik Jari"
+                                } else {
+                                    "Sidik Jari (Cek Perangkat)"
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        if (!isCloudSignedIn) {
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedButton(
+                                onClick = { launchDirectGoogleSignIn() },
+                                enabled = !isGoogleLoading,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .tactilePress()
+                                    .testTag("btn_login_manager_google")
+                            ) {
+                                if (isGoogleLoading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Masuk dengan Akun Google",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // --- DAFTAR AKUN MANAGER BARU (GOOGLE ATAU EMAIL) ---
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MintLight.copy(alpha = 0.6f)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.PersonAdd,
+                                        contentDescription = null,
+                                        tint = ForestGreenDark,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Buat Akun Manager Baru",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = ForestGreenDark
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Daftarkan akun utama Manager menggunakan Akun Google (sinkronisasi Cloud) atau melalui alamat Email Anda.",
+                                    fontSize = 11.5.sp,
+                                    color = ForestGreenDark,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = { launchDirectGoogleSignIn() },
+                            enabled = !isGoogleLoading,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .tactilePress()
+                                .testTag("btn_register_manager_google")
+                        ) {
+                            if (isGoogleLoading) {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Daftar Langsung dengan Akun Google",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.5.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            HorizontalDivider(modifier = Modifier.weight(1f))
+                            Text(
+                                text = "  atau daftar via Email  ",
+                                fontSize = 11.sp,
+                                color = MutedGreyText
+                            )
+                            HorizontalDivider(modifier = Modifier.weight(1f))
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = regEmailInput,
+                            onValueChange = {
+                                regEmailInput = it
+                                localError = null
+                            },
+                            label = { Text("Email Manager") },
+                            placeholder = { Text("contoh: emak@warkop.id") },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_register_manager_email")
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = regManagerNameInput,
+                            onValueChange = {
+                                regManagerNameInput = it
+                                localError = null
+                            },
+                            label = { Text("Nama Manager / Pemilik") },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_register_manager_name")
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = regStoreNameInput,
+                            onValueChange = {
+                                regStoreNameInput = it
+                                localError = null
+                            },
+                            label = { Text("Nama Warkop / Toko") },
+                            leadingIcon = { Icon(Icons.Default.Store, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_register_store_name")
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = regPinInput,
+                            onValueChange = {
+                                if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                    regPinInput = it
+                                    localError = null
+                                }
+                            },
+                            label = { Text("PIN Keamanan Manager (4-6 angka)") },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("input_register_manager_pin")
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+                                when {
+                                    !emailRegex.matches(regEmailInput.trim()) -> {
+                                        localError = "Masukkan alamat email yang valid (contoh: emak@warkop.id)"
+                                    }
+                                    regManagerNameInput.isBlank() -> {
+                                        localError = "Nama Manager wajib diisi"
+                                    }
+                                    regStoreNameInput.isBlank() -> {
+                                        localError = "Nama Warkop / Toko wajib diisi"
+                                    }
+                                    regPinInput.length !in 4..6 -> {
+                                        localError = "PIN Manager harus 4 hingga 6 digit angka"
+                                    }
+                                    else -> {
+                                        viewModel.registerManagerAccount(
+                                            storeName = regStoreNameInput,
+                                            managerName = regManagerNameInput,
+                                            managerEmail = regEmailInput,
+                                            managerPin = regPinInput
+                                        )
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = AmberCoffee),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .tactilePress()
+                                .testTag("btn_register_manager_email")
+                        ) {
+                            Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Buat Akun Manager (Email)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Pendaftaran Email mengaktifkan akun Manager dengan PIN di perangkat. Gunakan Akun Google untuk sinkronisasi otomatis Cloud Firebase.",
+                            fontSize = 11.sp,
+                            color = MutedGreyText,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 15.sp
                         )
                     }
                 } else {
@@ -521,7 +894,7 @@ fun RoleLoginScreen(
                         text = if (isCloudSignedIn) {
                             "Sinkronisasi Cloud Firebase Aktif"
                         } else {
-                            "Hubungkan Akun Google (Sinkronisasi Cloud)"
+                            "Buka Halaman Daftar / Sinkronisasi Cloud"
                         },
                         fontSize = 12.sp
                     )

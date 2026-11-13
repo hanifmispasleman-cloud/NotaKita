@@ -6,11 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Coffee
-import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +18,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,15 +41,22 @@ import kotlinx.coroutines.tasks.await
 
 @Composable
 fun AuthScreen(
-    onAuthSuccess: (storeName: String, managerName: String) -> Unit,
+    initialTab: Int = 1,
+    onGoogleAuthSuccess: (storeName: String, managerName: String) -> Unit,
+    onEmailRegisterSuccess: (storeName: String, managerName: String, email: String, pin: String) -> Unit,
     onDismiss: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
 
-    // 0 = Masuk (Login), 1 = Daftar (Register / Buat Akun Baru)
-    var selectedAuthTab by remember { mutableStateOf(1) }
+    // 0 = Masuk (Login), 1 = Daftar (Register / Buat Akun Manager Baru)
+    var selectedAuthTab by remember(initialTab) { mutableStateOf(initialTab) }
+
+    var emailInput by remember { mutableStateOf("") }
+    var managerNameInput by remember { mutableStateOf("") }
+    var storeNameInput by remember { mutableStateOf("Warkop Emak") }
+    var pinInput by remember { mutableStateOf("") }
 
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -78,7 +86,7 @@ fun AuthScreen(
                     val authResult = Firebase.auth.signInWithCredential(authCredential).await()
                     val user = authResult.user
                     val name = user?.displayName ?: "Manager"
-                    onAuthSuccess("Warkop Emak", name)
+                    onGoogleAuthSuccess(storeNameInput.ifBlank { "Warkop Emak" }, name)
                 } else {
                     errorMessage = "Tipe kredensial tidak dikenali"
                 }
@@ -89,6 +97,33 @@ fun AuthScreen(
                 errorMessage = e.localizedMessage ?: "Gagal memproses autentikasi"
             } finally {
                 isLoading = false
+            }
+        }
+    }
+
+    fun handleEmailRegister() {
+        val cleanEmail = emailInput.trim()
+        val cleanManager = managerNameInput.trim()
+        val cleanStore = storeNameInput.trim()
+        val cleanPin = pinInput.trim()
+
+        val emailRegex = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")
+        when {
+            !emailRegex.matches(cleanEmail) -> {
+                errorMessage = "Masukkan alamat email yang valid (contoh: emak@warkop.id)"
+            }
+            cleanManager.isBlank() -> {
+                errorMessage = "Nama Manager wajib diisi"
+            }
+            cleanStore.isBlank() -> {
+                errorMessage = "Nama Toko / Warkop wajib diisi"
+            }
+            cleanPin.length !in 4..6 || !cleanPin.all { it.isDigit() } -> {
+                errorMessage = "PIN Manager harus berupa 4 hingga 6 digit angka"
+            }
+            else -> {
+                errorMessage = null
+                onEmailRegisterSuccess(cleanStore, cleanManager, cleanEmail, cleanPin)
             }
         }
     }
@@ -134,7 +169,7 @@ fun AuthScreen(
                 )
 
                 Text(
-                    text = "Sistem Kasir Digital, Manajemen Stok & Pembukuan Kasbon Real-time",
+                    text = "Sistem Kasir Digital, Manajemen Stok & Pembukuan Real-time",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -142,12 +177,13 @@ fun AuthScreen(
                     modifier = Modifier.padding(top = 4.dp, bottom = 18.dp)
                 )
 
-                // TAB PILIHAN MASUK / DAFTAR
                 TabRow(
                     selectedTabIndex = selectedAuthTab,
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
                 ) {
                     Tab(
                         selected = selectedAuthTab == 0,
@@ -179,12 +215,14 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
                 if (selectedAuthTab == 1) {
-                    // MODE DAFTAR AKUN BARU
+                    // MODE DAFTAR AKUN BARU (GOOGLE ATAU EMAIL)
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -204,9 +242,9 @@ fun AuthScreen(
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Daftarkan akun utama warkop Anda dengan satu ketukan. Detail seperti nama toko, alamat, dan PIN otorisasi dapat diisi langsung setelah masuk ke dashboard warkop.",
+                                text = "Pilih pendaftaran instan dengan Akun Google (sinkronisasi Cloud) atau isi formulir Email untuk langsung masuk ke Dashboard Manager.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 lineHeight = 16.sp
@@ -214,7 +252,7 @@ fun AuthScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
                         onClick = { handleGoogleAuth() },
@@ -222,53 +260,164 @@ fun AuthScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
+                            .height(50.dp)
                             .tactilePress()
-                            .testTag("btn_register_account")
+                            .testTag("btn_register_google")
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(
                                 color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(22.dp),
                                 strokeWidth = 2.dp
                             )
                         } else {
+                            Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Daftar & Buat Akun Manager Baru",
+                                text = "Daftar Langsung dengan Akun Google",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        HorizontalDivider(modifier = Modifier.weight(1f))
+                        Text(
+                            text = "  atau daftar via Email  ",
+                            fontSize = 11.sp,
+                            color = MutedGreyText
+                        )
+                        HorizontalDivider(modifier = Modifier.weight(1f))
+                    }
+
                     Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = {
+                            emailInput = it
+                            errorMessage = null
+                        },
+                        label = { Text("Email Manager") },
+                        placeholder = { Text("contoh: emak@warkop.id") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("input_auth_register_email")
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = managerNameInput,
+                        onValueChange = {
+                            managerNameInput = it
+                            errorMessage = null
+                        },
+                        label = { Text("Nama Manager / Pemilik") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("input_auth_register_manager_name")
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = storeNameInput,
+                        onValueChange = {
+                            storeNameInput = it
+                            errorMessage = null
+                        },
+                        label = { Text("Nama Warkop / Toko") },
+                        leadingIcon = { Icon(Icons.Default.Store, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("input_auth_register_store_name")
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = {
+                            if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
+                                pinInput = it
+                                errorMessage = null
+                            }
+                        },
+                        label = { Text("Buat PIN Keamanan Manager (4-6 digit)") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("input_auth_register_pin")
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Button(
+                        onClick = { handleEmailRegister() },
+                        enabled = !isLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = AmberCoffee),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .tactilePress()
+                            .testTag("btn_register_email")
+                    ) {
+                        Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Buat Akun Manager dengan Email",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     TextButton(
                         onClick = { selectedAuthTab = 0 },
                         modifier = Modifier.testTag("switch_to_login")
                     ) {
                         Text(
-                            text = "Sudah memiliki akun? Masuk di sini",
+                            text = "Sudah memiliki akun Google? Masuk di sini",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
                 } else {
-                    // MODE MASUK (LOGIN)
+                    // MODE MASUK (LOGIN GOOGLE)
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "Masuk ke Akun Terdaftar",
+                                text = "Masuk ke Akun Manager Cloud",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Masuk kembali untuk mengakses pencatatan kasir, sinkronisasi stok, dan buku kasbon warkop Anda.",
+                                text = "Masuk dengan Akun Google yang terdaftar untuk menyinkronkan data kasir, stok bahan baku, laporan, dan sub-akun kasir.",
                                 fontSize = 12.sp,
                                 color = MutedGreyText,
                                 lineHeight = 16.sp
@@ -295,6 +444,8 @@ fun AuthScreen(
                                 strokeWidth = 2.dp
                             )
                         } else {
+                            Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Masuk dengan Akun Google",
                                 fontWeight = FontWeight.Bold,
@@ -310,7 +461,7 @@ fun AuthScreen(
                         modifier = Modifier.testTag("switch_to_register")
                     ) {
                         Text(
-                            text = "Belum memiliki akun? Daftar akun baru di sini",
+                            text = "Belum memiliki akun Manager? Daftar sekarang",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -330,7 +481,7 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Akun Google akan terdaftar sebagai Akun Utama (Manager). Sub-akun kasir lapangan dapat diatur dan dibuat di dalam dashboard.",
+                    text = "Akun Google langsung tersinkronisasi ke Cloud Firestore. Pendaftaran Email mengaktifkan akun Manager dengan PIN di perangkat ini.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -342,9 +493,12 @@ fun AuthScreen(
                     OutlinedButton(
                         onClick = onDismiss,
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth().tactilePress().testTag("btn_dismiss_auth")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tactilePress()
+                            .testTag("btn_dismiss_auth")
                     ) {
-                        Text("Kembali ke Aplikasi (Mode Lokal)")
+                        Text("Kembali ke Layar Kunci")
                     }
                 }
             }

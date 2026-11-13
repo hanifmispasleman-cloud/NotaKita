@@ -1,5 +1,7 @@
 package com.example
 
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.CartItem
 import com.example.data.model.CashierSubAccount
 import com.example.data.model.DebtAccount
@@ -7,9 +9,13 @@ import com.example.data.model.OperatingCost
 import com.example.data.model.StockLog
 import com.example.data.model.StoreProfile
 import com.example.data.model.Transaction
+import com.example.ui.viewmodel.SessionRole
+import com.example.ui.viewmodel.WarkopViewModel
 import com.example.util.ReportExporter
 import com.example.util.ReportPeriod
+import com.google.firebase.FirebaseApp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -134,5 +140,25 @@ class ReportAndSecurityTest {
         assertTrue(sheet2.contains("TOTAL JURNAL (SEIMBANG)"))
         assertTrue(sheet4.contains("Kasir Pagi"))
         assertTrue(sheet4.contains("Kasir Sore"))
+    }
+
+    @Test
+    fun `registerManagerAccount validates email and pin and unlocks Manager session`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        if (FirebaseApp.getApps(app).isEmpty()) {
+            FirebaseApp.initializeApp(app)
+        }
+        val vm = WarkopViewModel(app)
+
+        assertFalse(vm.registerManagerAccount("Warkop Emak", "Budi", "bukan-email", "5678"))
+        assertTrue(vm.sessionRole.value is SessionRole.Locked)
+
+        assertFalse(vm.registerManagerAccount("Warkop Emak", "Budi", "budi@warkop.id", "12"))
+        assertTrue(vm.sessionRole.value is SessionRole.Locked)
+
+        val ok = vm.registerManagerAccount("Warkop Jaya", "Budi", "budi@warkop.id", "5678")
+        assertTrue(ok)
+        assertEquals(SessionRole.Manager("Budi"), vm.sessionRole.value)
+        assertEquals("Budi", vm.activeOperator.value)
     }
 }

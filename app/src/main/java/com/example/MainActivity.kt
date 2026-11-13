@@ -68,11 +68,27 @@ class MainActivity : FragmentActivity() {
     }
 }
 
+private data class PendingManagerRegistration(
+    val storeName: String,
+    val managerName: String,
+    val email: String,
+    val pin: String
+)
+
+private data class PendingGoogleStoreSync(
+    val storeName: String,
+    val managerName: String
+)
+
 @Composable
 fun AppRoot() {
     val context = LocalContext.current
     var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
     var showAuthScreen by remember { mutableStateOf(false) }
+    var pendingAutoUnlockManager by remember { mutableStateOf(false) }
+    var pendingGoogleSync by remember { mutableStateOf<PendingGoogleStoreSync?>(null) }
+    var pendingEmailRegistration by remember { mutableStateOf<PendingManagerRegistration?>(null) }
+
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
 
@@ -89,8 +105,15 @@ fun AppRoot() {
     if (showAuthScreen && currentUser == null) {
         BackHandler { showAuthScreen = false }
         AuthScreen(
-            onAuthSuccess = { _, _ ->
+            initialTab = 1,
+            onGoogleAuthSuccess = { storeName, managerName ->
+                pendingGoogleSync = PendingGoogleStoreSync(storeName, managerName)
+                pendingAutoUnlockManager = true
                 currentUser = Firebase.auth.currentUser
+                showAuthScreen = false
+            },
+            onEmailRegisterSuccess = { storeName, managerName, email, pin ->
+                pendingEmailRegistration = PendingManagerRegistration(storeName, managerName, email, pin)
                 showAuthScreen = false
             },
             onDismiss = { showAuthScreen = false }
@@ -100,6 +123,23 @@ fun AppRoot() {
         key(sessionKey) {
             MainAppContainer(
                 isSignedIn = currentUser != null,
+                pendingAutoUnlockManager = pendingAutoUnlockManager,
+                pendingGoogleSync = pendingGoogleSync,
+                pendingEmailRegistration = pendingEmailRegistration,
+                onConsumeAutoUnlock = {
+                    pendingAutoUnlockManager = false
+                    pendingGoogleSync = null
+                },
+                onConsumeEmailRegistration = {
+                    pendingEmailRegistration = null
+                },
+                onBeforeGoogleSignIn = {
+                    pendingAutoUnlockManager = true
+                },
+                onGoogleSignInCancelled = {
+                    pendingAutoUnlockManager = false
+                    pendingGoogleSync = null
+                },
                 onRequestSignIn = { showAuthScreen = true },
                 onSignOut = {
                     coroutineScope.launch {
@@ -108,6 +148,8 @@ fun AppRoot() {
                                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
                             } catch (_: Exception) {}
                             Firebase.auth.signOut()
+                            pendingAutoUnlockManager = false
+                            pendingGoogleSync = null
                             currentUser = null
                         }
                     }
@@ -119,8 +161,15 @@ fun AppRoot() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppContainer(
+private fun MainAppContainer(
     isSignedIn: Boolean,
+    pendingAutoUnlockManager: Boolean,
+    pendingGoogleSync: PendingGoogleStoreSync?,
+    pendingEmailRegistration: PendingManagerRegistration?,
+    onConsumeAutoUnlock: () -> Unit,
+    onConsumeEmailRegistration: () -> Unit,
+    onBeforeGoogleSignIn: () -> Unit,
+    onGoogleSignInCancelled: () -> Unit,
     onRequestSignIn: () -> Unit,
     onSignOut: () -> Unit,
     viewModel: WarkopViewModel = viewModel()
@@ -136,6 +185,30 @@ fun MainAppContainer(
     val snackbarHostState = remember { SnackbarHostState() }
 
     var currentScreen by remember { mutableStateOf(DrawerDestination.DASHBOARD) }
+
+    // Auto-unlock Manager Dashboard after Google Sign-In
+    LaunchedEffect(isSignedIn, pendingAutoUnlockManager) {
+        if (isSignedIn && pendingAutoUnlockManager) {
+            viewModel.unlockManagerFromGoogleAuth(
+                storeName = pendingGoogleSync?.storeName,
+                managerName = pendingGoogleSync?.managerName
+            )
+            onConsumeAutoUnlock()
+        }
+    }
+
+    // Apply pending Email Manager registration from AuthScreen
+    LaunchedEffect(pendingEmailRegistration) {
+        pendingEmailRegistration?.let { reg ->
+            viewModel.registerManagerAccount(
+                storeName = reg.storeName,
+                managerName = reg.managerName,
+                managerEmail = reg.email,
+                managerPin = reg.pin
+            )
+            onConsumeEmailRegistration()
+        }
+    }
 
     // Show Snackbar when ViewModel emits toast
     LaunchedEffect(uiToast) {
@@ -164,6 +237,8 @@ fun MainAppContainer(
                 viewModel = viewModel,
                 isCloudSignedIn = isSignedIn,
                 onRequestCloudAuth = onRequestSignIn,
+                onBeforeGoogleSignIn = onBeforeGoogleSignIn,
+                onGoogleSignInCancelled = onGoogleSignInCancelled,
                 modifier = Modifier.padding(innerPadding)
             )
         }
